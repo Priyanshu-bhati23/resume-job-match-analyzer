@@ -8,12 +8,15 @@ into `SuggestionSet`; anything it "quotes" from the resume must really be there.
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from pydantic import ValidationError
 
 from .llm import LLM
 from .schemas import RequirementMatch, SkillReport, Suggestion, SuggestionSet
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a careful technical recruiter helping a candidate tailor a resume to one job posting.
 
@@ -139,11 +142,14 @@ def generate(
     for _ in range(2):  # first attempt, then one repair turn with the validation error
         try:
             reply = llm.complete(SYSTEM_PROMPT, messages)
-        except Exception:
+        except Exception as exc:
+            detail = getattr(getattr(exc, "response", None), "text", "")[:300]
+            log.warning("LLM call failed, using rule-based suggestions: %s %s", exc, detail)
             return fallback, "rules"
         try:
             return parse(reply, resume), llm.name
         except ValueError as exc:
+            log.warning("LLM reply rejected (%s); asking for a corrected reply", exc)
             messages += [
                 {"role": "assistant", "content": reply},
                 {"role": "user", "content": f"That reply was rejected: {exc}. Send the corrected JSON object only."},
